@@ -80,8 +80,16 @@ PubkeyAuthentication yes
 X11Forwarding no
 AllowUsers $UTILISATEUR
 CONF
-sshd -t
-systemctl reload ssh || systemctl reload sshd
+sshd -t   # refuse d'aller plus loin si la config est invalide
+
+# Ubuntu 24.04 active sshd par socket (ssh.socket) : selon l'installation, le
+# service s'appelle ssh, sshd, ou n'existe pas en tant que tel. Aucune de ces
+# variantes ne doit faire echouer le script — la config est de toute facon
+# relue a chaque nouvelle connexion, et les sessions ouvertes survivent.
+systemctl restart ssh.socket 2>/dev/null \
+  || systemctl reload ssh 2>/dev/null \
+  || systemctl reload sshd 2>/dev/null \
+  || echo "    (rechargement sshd non necessaire ou deja actif)"
 
 echo "==> Pare-feu"
 ufw default deny incoming
@@ -109,6 +117,14 @@ if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
 fi
 usermod -aG docker "$UTILISATEUR"
+
+echo
+echo "==> Etat effectif (verifie, pas promis)"
+sshd -T 2>/dev/null | grep -Ei '^(permitrootlogin|passwordauthentication|pubkeyauthentication|allowusers)' | sed 's/^/    /'
+echo "    sudo   : $(passwd -S "$UTILISATEUR" | awk '{print $2}')  (P = mot de passe utilisable)"
+echo "    ufw    : $(ufw status | head -1)"
+echo "    f2b    : $(systemctl is-active fail2ban)"
+echo "    groupes: $(id -nG "$UTILISATEUR")"
 
 echo
 echo "Terminé."
