@@ -51,6 +51,19 @@ echo "$CLE_PUBLIQUE" > "/home/$UTILISATEUR/.ssh/authorized_keys"
 chmod 600 "/home/$UTILISATEUR/.ssh/authorized_keys"
 chown "$UTILISATEUR:$UTILISATEUR" "/home/$UTILISATEUR/.ssh/authorized_keys"
 
+# `adduser --disabled-password` laisse le compte sans mot de passe, et sudo en
+# réclame un : sans cette étape, l'utilisateur se retrouve incapable d'élever
+# ses privilèges dès que la session root est fermée. La clé sert à entrer, le
+# mot de passe à devenir root : deux secrets distincts.
+if ! passwd -S "$UTILISATEUR" | awk '{print $2}' | grep -q '^P$'; then
+  echo
+  echo "==> Définis maintenant le mot de passe sudo de $UTILISATEUR"
+  echo "    (il ne sert PAS à se connecter — la connexion se fait par clé)"
+  until passwd "$UTILISATEUR"; do
+    echo "    Réessaie." >&2
+  done
+fi
+
 echo "==> Vérification que la clé est bien en place avant de couper les mots de passe"
 if [[ ! -s "/home/$UTILISATEUR/.ssh/authorized_keys" ]]; then
   echo "authorized_keys vide — on ne touche pas à sshd." >&2
