@@ -1,0 +1,74 @@
+# Yeba — assistant IA pour étudiants (RDC)
+# Source de vérité du projet : architecture.md à la racine du dépôt.
+# Hermès ne duplique pas cette doctrine, il s'y soumet.
+
+nom: yeba
+type: code
+
+depot:
+  url: git@github.com:Yeba-dev-org/yeba.git
+  branche_base: main
+  # Le compte d'entreprise Yeba est propriétaire. Joemi est collaborateur.
+  # L'accès se fait par deploy key posée sur le VPS, jamais par l'App GitHub.
+  acces: deploy_key
+  cle: ~/.ssh/yeba_ed25519
+
+modeles:
+  lead: claude              # abonnement Pro, OAuth, jamais routé par un proxy
+  workers: muse-spark-1.3   # tier STANDARD — pas d'entraînement sur le code
+
+  # ⚠️ Le tier `muse-spark-1.3-contributor` (0,10/0,20 $/M au lieu de
+  # 1,25/4,25) coûte 12x moins cher MAIS Meta s'entraîne sur les prompts et
+  # les complétions. Le dépôt appartient au compte d'entreprise Yeba :
+  # ce basculement n'appartient pas à Joemi seul. Changer cette ligne le jour
+  # où le compte principal donne son accord écrit — rien d'autre à toucher.
+
+# Fichiers qu'un worker ne lit jamais. Appliqué au niveau du processus
+# (le worker ne tourne pas avec ces chemins montés), pas par consigne de prompt.
+workers_interdits:
+  - .env
+  - .env.*
+  - Docs/INVENTAIRE_SECRETS.md
+  - Docs/ROTATION_URGENCE.md
+  - preuves-perf/
+  - .mcp.json
+
+# La porte de validation. Reprise de .github/workflows/ci.yml, plus deux gardes.
+# Un rendu de worker qui ne passe pas TOUT est refusé et renvoyé avec la sortie brute.
+porte:
+  - nom: lint
+    cmd: npm run lint
+  - nom: types
+    cmd: npx tsc --noEmit
+  - nom: tests
+    cmd: npm test
+  - nom: cloisonnement          # suite A/B RLS — faille A2, point bloquant n°2
+    cmd: npm run test:cloisonnement
+    non_negociable: true
+  - nom: secrets
+    cmd: gitleaks detect --no-banner
+    non_negociable: true
+  - nom: audit
+    cmd: npm audit --audit-level=high
+  - nom: skip-worktree          # piège du 2026-08-07 : modif invisible à git status
+    cmd: "! git ls-files -v | grep -q '^S'"
+    non_negociable: true
+
+# Arrêts durs. Hermès s'arrête et rend la main à Joemi. Repris des règles d'or.
+arrets:
+  - phase_suivante_sans_validation      # §10
+  - decision_marquee_bloquante          # §7.2 — grille de crédits, dotations 320/120
+  - toucher_yeba_prod                   # règle 9
+  - cle_de_production                   # règle 9
+  - ajout_de_fonctionnalite             # règle 11 — toute idée va dans V2.md
+  - doute_securite                      # règle 12
+
+# Règle 13 : Docs/histoire.md se met à jour dans le MÊME lot de commits.
+# Un commit sans sa ligne d'histoire est refusé par la porte.
+exige_histoire: true
+
+phases:
+  source: prompts/          # P00 → P13
+  # La phase courante est déterminée par le lead au premier démarrage,
+  # en lisant le dépôt. Jamais supposée ici.
+  courante: auto
