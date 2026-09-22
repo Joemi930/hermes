@@ -71,7 +71,22 @@ if [[ ! -s "/home/$UTILISATEUR/.ssh/authorized_keys" ]]; then
 fi
 
 echo "==> SSH : clé uniquement, pas de root, pas de mot de passe"
-cat > /etc/ssh/sshd_config.d/99-hermes.conf <<CONF
+
+# Les fichiers de /etc/ssh/sshd_config.d/ sont lus dans l'ordre lexical et,
+# chez OpenSSH, LA PREMIERE occurrence d'une directive l'emporte. L'image
+# Contabo livre un 50-cloud-init.conf posant `PasswordAuthentication yes` :
+# un fichier nomme 99-* arrivait trop tard et la coupure n'avait jamais lieu,
+# alors que PermitRootLogin (absent de ce fichier) passait sans probleme.
+# D'ou deux precautions : se placer en tete (00-) ET neutraliser les
+# definitions concurrentes partout ailleurs.
+rm -f /etc/ssh/sshd_config.d/99-hermes.conf
+for f in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
+  [ -f "$f" ] || continue
+  case "$f" in */00-hermes.conf) continue ;; esac
+  sed -i -E 's/^([[:space:]]*(PasswordAuthentication|PermitRootLogin|KbdInteractiveAuthentication)[[:space:]])/#\1/I' "$f"
+done
+
+cat > /etc/ssh/sshd_config.d/00-hermes.conf <<CONF
 Port $PORT_SSH
 PermitRootLogin no
 PasswordAuthentication no
@@ -90,6 +105,21 @@ systemctl restart ssh.socket 2>/dev/null \
   || systemctl reload ssh 2>/dev/null \
   || systemctl reload sshd 2>/dev/null \
   || echo "    (rechargement sshd non necessaire ou deja actif)"
+
+echo "==> Verification que la coupure a REELLEMENT eu lieu"
+etat_mdp=$(sshd -T 2>/dev/null | awk 'tolower($1)=="passwordauthentication"{print tolower($2)}')
+etat_root=$(sshd -T 2>/dev/null | awk 'tolower($1)=="permitrootlogin"{print tolower($2)}')
+if [ "$etat_mdp" != "no" ] || [ "$etat_root" != "no" ]; then
+  echo >&2
+  echo "  ECHEC : la configuration effective ne correspond pas a l'intention." >&2
+  echo "          passwordauthentication = ${etat_mdp:-inconnu} (attendu: no)" >&2
+  echo "          permitrootlogin        = ${etat_root:-inconnu} (attendu: no)" >&2
+  echo "          NE FERME PAS ta session. Une autre directive gagne ailleurs :" >&2
+  echo "          grep -rniE '^[[:space:]]*(PasswordAuthentication|PermitRootLogin)' \\" >&2
+  echo "               /etc/ssh/sshd_config /etc/ssh/sshd_config.d/" >&2
+  exit 1
+fi
+echo "    coupure confirmee par sshd -T"
 
 echo "==> Pare-feu"
 ufw default deny incoming
