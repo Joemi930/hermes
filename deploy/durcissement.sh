@@ -97,14 +97,31 @@ AllowUsers $UTILISATEUR
 CONF
 sshd -t   # refuse d'aller plus loin si la config est invalide
 
-# Ubuntu 24.04 active sshd par socket (ssh.socket) : selon l'installation, le
-# service s'appelle ssh, sshd, ou n'existe pas en tant que tel. Aucune de ces
-# variantes ne doit faire echouer le script — la config est de toute facon
-# relue a chaque nouvelle connexion, et les sessions ouvertes survivent.
-systemctl restart ssh.socket 2>/dev/null \
-  || systemctl reload ssh 2>/dev/null \
+# JAMAIS de `restart` ici. Un restart arrete puis redemarre : si le demarrage
+# echoue, plus rien n'ecoute sur le 22 et la machine devient injoignable — ce
+# qui est exactement arrive le 2026-09-22 avec `systemctl restart ssh.socket`.
+# Un `reload` ne coupe jamais l'ecoute. Et sous activation par socket, chaque
+# nouvelle connexion lance un sshd qui relit la config : il n'y a de toute
+# facon rien a recharger.
+systemctl reload ssh 2>/dev/null \
   || systemctl reload sshd 2>/dev/null \
-  || echo "    (rechargement sshd non necessaire ou deja actif)"
+  || echo "    (pas de reload necessaire : config relue a chaque connexion)"
+
+# Filet : quoi qu'il arrive, on refuse de continuer si plus rien n'ecoute.
+if ! ss -tln 2>/dev/null | awk '$1=="LISTEN"{print $4}' | grep -qE ':'"$PORT_SSH"'$'; then
+  echo >&2
+  echo "  ALERTE : plus rien n'ecoute sur le port $PORT_SSH." >&2
+  echo "           Tentative de redemarrage..." >&2
+  systemctl start ssh.socket 2>/dev/null || systemctl start ssh 2>/dev/null || true
+  sleep 2
+  if ! ss -tln 2>/dev/null | awk '$1=="LISTEN"{print $4}' | grep -qE ':'"$PORT_SSH"'$'; then
+    echo "  ECHEC : impossible de remettre sshd en ecoute." >&2
+    echo "          NE FERME PAS ta session. Passe par la console VNC et lance :" >&2
+    echo "          journalctl -u ssh.socket -u ssh -n 30 --no-pager" >&2
+    exit 1
+  fi
+  echo "           sshd est reparti." >&2
+fi
 
 echo "==> Verification que la coupure a REELLEMENT eu lieu"
 etat_mdp=$(sshd -T 2>/dev/null | awk 'tolower($1)=="passwordauthentication"{print tolower($2)}')
