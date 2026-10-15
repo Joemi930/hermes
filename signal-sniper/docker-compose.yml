@@ -1,0 +1,25 @@
+services:
+  # MetaTrader 5 sous Wine + pont Python (mt5linux) sur le port 8001.
+  # Interface web (pour te connecter à ton compte Deriv la 1re fois) : http://localhost:3000 via tunnel SSH.
+  mt5:
+    image: gmag11/metatrader5_vnc
+    restart: unless-stopped
+    environment:
+      - CUSTOM_USER=${VNC_USER:-trader}
+      - PASSWORD=${VNC_PASSWORD:-change-moi}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./mt5-config:/config
+
+  sniper:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - MT5_HOST=mt5
+      - MT5_PORT=8001
+    volumes:
+      - ./data:/data
+    depends_on:
+      - mt5

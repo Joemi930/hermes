@@ -1,0 +1,5 @@
+.env
+data/
+mt5-config/
+__pycache__/
+*.session
