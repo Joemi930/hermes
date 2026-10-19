@@ -80,10 +80,10 @@ class Engine:
             return
         t0 = time.perf_counter()
         try:
-            sig = await self.parser.parse(msg, self.trades_summary())
+            sig = await asyncio.wait_for(self.parser.parse(msg, self.trades_summary()), self.cfg.analysis_timeout_s)
         except Exception as e:
             log.exception("Analyse échouée")
-            await self.notify(f"❗ Analyse impossible d'un message :\n{msg.text[:300]}\nErreur : {e}")
+            await self.notify(self.raw_alert("Analyse impossible", msg, type(e).__name__ + (f": {e}" if str(e) else "")))
             return
         self.parser.remember(msg, sig)
         self._handled[msg.id] = sig.kind
@@ -91,10 +91,11 @@ class Engine:
                  sig.source, sig.model_dump_json())
 
         if sig.kind == "ignore":
+            if msg.photo:  # une image peut contenir le signal : on ne la laisse jamais passer en silence
+                await self.notify(self.raw_alert("Image jugée sans intérêt par l'IA", msg))
             return
         if sig.kind == "info":
-            if sig.summary:
-                await self.notify(f"ℹ️ Festo : {sig.summary}")
+            await self.notify(f"ℹ️ Festo : {sig.summary or msg.text.strip()[:300] or '(image sans texte)'}")
             return
         if sig.confidence < self.cfg.min_confidence:
             await self.notify(f"⚠️ Signal pas clair, NON exécuté (confiance {sig.confidence:.0%}) :\n"
@@ -122,6 +123,12 @@ class Engine:
             self._save()
 
     # --- helpers -------------------------------------------------------------------------------
+    @staticmethod
+    def raw_alert(title: str, msg: Incoming, detail: str = "") -> str:
+        body = msg.text.strip()[:400] or "(pas de texte)"
+        return (f"❗ {title} : regarde le canal toi-même.\nMessage{' + image' if msg.photo else ''} :\n{body}"
+                + (f"\n({detail})" if detail else ""))
+
     def _target_trades(self, code: str | None) -> list[Trade]:
         """Trades visés par une mise à jour : ceux du symbole cité, sinon le dernier trade récent."""
         live = self._open_trades()

@@ -154,3 +154,88 @@ def test_results_and_low_confidence(tmp_path):
     assert not notes and not ex.sent
     asyncio.run(eng.on_channel_message(msg(21, "On attend un peu à la clôture de la bougie m15")))
     assert not ex.sent and "pas clair" in notes[-1]
+
+
+# --- aucune voie silencieuse : le message arrive toujours jusqu'à l'utilisateur ---
+def test_analysis_timeout_sends_raw_alert(tmp_path):
+    class Hung:
+        async def parse(self, *a):
+            await asyncio.sleep(10)
+
+    eng, ex, notes = make(tmp_path)
+    eng.cfg = dataclasses.replace(eng.cfg, analysis_timeout_s=0.05)
+    eng.parser.llm = Hung()
+    asyncio.run(eng.on_channel_message(msg(30, "On place ces deux sell limit 4890.475 et 4895.512", photo=b"jpg")))
+    assert not ex.sent and "Analyse impossible" in notes[-1] and "sell limit 4890.475" in notes[-1] and "+ image" in notes[-1]
+
+
+def test_image_ignored_by_ai_still_alerts(tmp_path):
+    sig = Signal(kind="ignore", confidence=0.9, summary="", source="llm")
+    eng, ex, notes = make(tmp_path, sig)
+    asyncio.run(eng.on_channel_message(msg(31, "", photo=b"jpg")))
+    assert notes and "Image jugée sans intérêt" in notes[-1]
+
+
+def test_info_without_summary_still_alerts(tmp_path):
+    sig = Signal(kind="info", confidence=0.9, summary="", source="llm")
+    eng, ex, notes = make(tmp_path, sig)
+    asyncio.run(eng.on_channel_message(msg(32, "Bonjour Traders ✅ Bonne semaine de paix et de chiffre")))
+    assert "Bonne semaine" in notes[-1]
+
+
+def test_worker_failure_and_download_failure_alert(tmp_path):
+    from types import SimpleNamespace
+
+    from sniper.main import process_message
+
+    eng, ex, notes = make(tmp_path)
+    sent = []
+
+    class N:
+        async def send(self, text):
+            sent.append(text)
+
+    async def bad_download(file=None):
+        raise OSError("réseau coupé")
+
+    m = SimpleNamespace(id=40, message="Sell V10 lot 2", date=datetime.now(timezone.utc), photo=object(),
+                        fwd_from=None, download_media=bad_download)
+    asyncio.run(process_message(m, False, eng, N()))
+    assert "Image non téléchargée" in sent[0]
+
+    class Boom:
+        async def on_channel_message(self, incoming):
+            raise RuntimeError("plantage")
+
+    m.photo = None
+    asyncio.run(process_message(m, False, Boom(), N()))
+    assert "Message non traité" in sent[-1] and "Sell V10" in sent[-1]
+
+
+def test_whatsapp_retries_then_succeeds(tmp_path):
+    import httpx
+
+    from sniper.notifier import Notifier
+
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(429 if len(calls) < 3 else 200, text="x")
+
+    cfg = dataclasses.replace(load_config(), data_dir=str(tmp_path), callmebot_phone="+1", callmebot_apikey="k",
+                              notify_telegram_saved=False, notify_webhook_url="")
+    n = Notifier(cfg)
+    n.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    import sniper.notifier as nm
+    real_sleep = nm.asyncio.sleep
+
+    async def fast(_):
+        await real_sleep(0)
+
+    nm.asyncio.sleep = fast
+    try:
+        asyncio.run(n.send("test"))
+    finally:
+        nm.asyncio.sleep = real_sleep
+    assert len(calls) == 3

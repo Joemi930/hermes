@@ -16,14 +16,26 @@ class Notifier:
     def attach_telegram(self, client):
         self.tg = client
 
+    async def _whatsapp(self, text: str) -> None:
+        for attempt in (1, 2, 3):
+            try:
+                r = await self.http.get("https://api.callmebot.com/whatsapp.php", params={
+                    "phone": self.cfg.callmebot_phone, "text": text, "apikey": self.cfg.callmebot_apikey})
+                if r.status_code == 200:
+                    return
+                log.warning("CallMeBot a répondu %s : %s", r.status_code, r.text[:200])
+            except Exception as e:
+                log.warning("CallMeBot injoignable : %s", e)
+            await asyncio.sleep(3 * attempt)
+        raise RuntimeError("WhatsApp : 3 essais échoués")
+
     async def send(self, text: str) -> None:
         log.info("NOTIF: %s", text.replace("\n", " | "))
         jobs = []
         if self.tg and self.cfg.notify_telegram_saved:
             jobs.append(self.tg.send_message("me", text))
         if self.cfg.callmebot_phone and self.cfg.callmebot_apikey:
-            jobs.append(self.http.get("https://api.callmebot.com/whatsapp.php", params={
-                "phone": self.cfg.callmebot_phone, "text": text, "apikey": self.cfg.callmebot_apikey}))
+            jobs.append(self._whatsapp(text))
         if self.cfg.notify_webhook_url:
             jobs.append(self.http.post(self.cfg.notify_webhook_url, json={"text": text}))
         for r in await asyncio.gather(*jobs, return_exceptions=True):

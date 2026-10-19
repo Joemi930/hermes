@@ -58,6 +58,8 @@ class Config:
     max_signal_age_s: int
     context_minutes: int
     min_confidence: float
+    analysis_timeout_s: float
+    poll_interval_s: int
     magic: int
     # Notifications
     notify_telegram_saved: bool
@@ -103,6 +105,8 @@ def load_config() -> Config:
         max_signal_age_s=_int("MAX_SIGNAL_AGE_S", 180),
         context_minutes=_int("CONTEXT_MINUTES", 30),
         min_confidence=_float("MIN_CONFIDENCE", 0.7),
+        analysis_timeout_s=_float("ANALYSIS_TIMEOUT_S", 45),
+        poll_interval_s=_int("POLL_INTERVAL_S", 15),
         magic=_int("MAGIC", 930_001),
         notify_telegram_saved=_bool("NOTIFY_TELEGRAM_SAVED", True),
         callmebot_phone=_str("CALLMEBOT_PHONE"),
